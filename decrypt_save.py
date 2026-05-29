@@ -4,7 +4,6 @@ import sys
 import zlib
 
 KNOWN_SOURCE_SID = 76561198026925824
-INDEX_XOR_KEY = bytes.fromhex("cb 1c c4 0c 20 2e 20 2d 38 1b fa 27 28 29 19 2b 2d 0e 86 38 20 22 3c 35")
 
 def detect_source_steam_id(index_path):
     target_path = index_path
@@ -23,43 +22,25 @@ def detect_source_steam_id(index_path):
     return None
 
 
-def decrypt_index_file(filepath):
+def decrypt_index_file(filepath, steam_sid):
     print(f"  Processing index.save:")
     with open(filepath, 'rb') as f:
-        data = bytearray(f.read())
+        data = f.read()
         
-    if len(data) < 28:
+    if len(data) < 8:
         print("    [ERROR] index.save file is too short.")
         return
         
-    acc_0 = struct.unpack_from("<I", data, 0)[0]
-    acc_18 = struct.unpack_from("<I", data, 24)[0]
+    sid_bytes = struct.pack("<Q", steam_sid)
+    decrypted_data = bytes(c ^ sid_bytes[i % 8] for i, c in enumerate(data))
     
-    print(f"    Header AccountID signature (offset 0x00): {acc_0 - 3} (raw: {acc_0})")
-    print(f"    Main AccountID signature   (offset 0x18): {acc_18}")
-
-    if len(data) > 0x148:
-        length = data[0x145]
-        str_bytes = data[0x148:0x148+length]
-        
-        dec_chars = []
-        for i, b in enumerate(str_bytes):
-            dec_chars.append(b ^ INDEX_XOR_KEY[i % len(INDEX_XOR_KEY)])
-        dec_str_bytes = bytes(dec_chars)
-        
-        try:
-            dec_str = dec_str_bytes.decode('utf-8', errors='replace')
-        except Exception:
-            dec_str = dec_str_bytes.hex(' ')
-            
-        print(f"    Decrypted internal path record (offset 0x148): '{dec_str}'")
-        
-        data[0x148:0x148+length] = dec_str_bytes
+    if b"SSaveGameHeader" in decrypted_data:
+        print("    [OK] Decrypted header structure verified: Found 'SSaveGameHeader'")
         
     out_path = filepath + ".decrypted"
     with open(out_path, 'wb') as f:
-        f.write(data)
-    print(f"    [SUCCESS] Dumped decrypted index metadata in-place -> {os.path.basename(out_path)}\n")
+        f.write(decrypted_data)
+    print(f"    [SUCCESS] Dumped decrypted index raw payload -> {os.path.basename(out_path)}\n")
 
 
 def decrypt_data_file(filepath, steam_sid):
@@ -91,6 +72,10 @@ def decrypt_data_file(filepath, steam_sid):
 
 
 def main():
+    try:
+        sys.stdout.reconfigure(encoding='utf-8')
+    except Exception:
+        pass
     print("007 First Light (Knight) Inspector & Decrypter")
     print("==============================================")
     
@@ -127,7 +112,7 @@ def main():
                     dec_sid = KNOWN_SOURCE_SID
 
             if has_index:
-                decrypt_index_file(os.path.join(root, "index.save"))
+                decrypt_index_file(os.path.join(root, "index.save"), dec_sid)
             if has_data:
                 decrypt_data_file(os.path.join(root, "data.save"), dec_sid)
                 

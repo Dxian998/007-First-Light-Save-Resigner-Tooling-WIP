@@ -4,7 +4,6 @@ import struct
 import sys
 import zlib
 
-INDEX_XOR_KEY = bytes.fromhex("cb 1c c4 0c 20 2e 20 2d 38 1b fa 27 28 29 19 2b 2d 0e 86 38 20 22 3c 35")
 
 def detect_source_steam_id(index_path):
     target_path = index_path
@@ -43,25 +42,18 @@ def encrypt_data_file(decrypted_path, steam_sid):
     print(f"    [SUCCESS] Encrypted and packed save saved to -> {os.path.basename(output_path)}\n")
     return True
 
-def encrypt_index_file(decrypted_path):
+def encrypt_index_file(decrypted_path, steam_sid):
     print("  Processing index.save.decrypted:")
     if not os.path.exists(decrypted_path):
         print(f"    [WARN] Decrypted index file not found: {decrypted_path}")
         return False
     with open(decrypted_path, 'rb') as f:
-        data = bytearray(f.read())
-    if len(data) < 28:
+        data = f.read()
+    if len(data) < 8:
         print("    [ERROR] index file is too short.")
         return False
-    if len(data) > 0x148:
-        length = data[0x145]
-        str_bytes = data[0x148:0x148+length]
-        scrambled_chars = []
-        for i, b in enumerate(str_bytes):
-            scrambled_chars.append(b ^ INDEX_XOR_KEY[i % len(INDEX_XOR_KEY)])
-        scrambled_str_bytes = bytes(scrambled_chars)
-        data[0x148:0x148+length] = scrambled_str_bytes
-        print("    [OK] Re-scrambled path record at offset 0x148.")
+    sid_bytes = struct.pack("<Q", steam_sid)
+    ciphertext = bytes(c ^ sid_bytes[i % 8] for i, c in enumerate(data))
     dir_name = os.path.dirname(decrypted_path)
     output_path = os.path.join(dir_name, "index.save")
     if os.path.exists(output_path):
@@ -70,8 +62,8 @@ def encrypt_index_file(decrypted_path):
             shutil.copy2(output_path, backup_path)
             print(f"    [OK] Existing index.save backed up -> {os.path.basename(backup_path)}")
     with open(output_path, 'wb') as f:
-        f.write(data)
-    print(f"    [SUCCESS] Scrambled index saved to -> {os.path.basename(output_path)}\n")
+        f.write(ciphertext)
+    print(f"    [SUCCESS] Encrypted index saved to -> {os.path.basename(output_path)}\n")
     return True
 
 def main():
@@ -115,7 +107,10 @@ def main():
     print("\nStarting Save Encryption & Packing...")
     print("------------------------------------------------")
     if has_index_dec:
-        encrypt_index_file(decrypted_index_path)
+        if target_sid:
+            encrypt_index_file(decrypted_index_path, target_sid)
+        else:
+            print("  [SKIP] Skipping index.save encryption because no SteamID64 key was specified or detected.")
     if has_data_dec:
         if target_sid:
             encrypt_data_file(decrypted_data_path, target_sid)

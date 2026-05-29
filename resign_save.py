@@ -71,82 +71,23 @@ def bruteforce_data_save_key(filepath):
 
 
 def resign_index_file(filepath, from_sid, to_sid):
-    with open(filepath, 'rb') as f:
-        data = bytearray(f.read())
-        
-    from_acc = from_sid & 0xFFFFFFFF
-    to_acc = to_sid & 0xFFFFFFFF
-    
-    from_acc_le = struct.pack('<I', from_acc)
-    to_acc_le = struct.pack('<I', to_acc)
-    
-    from_acc_plus3_le = struct.pack('<I', from_acc + 3)
-    to_acc_plus3_le = struct.pack('<I', to_acc + 3)
-    
-    from_acc_plus106_le = struct.pack('<I', from_acc + 106)
-    to_acc_plus106_le = struct.pack('<I', to_acc + 106)
-    
     print(f"  Resigning index.save:")
-    print(f"    Source AccountID: {from_acc} ({from_acc_le.hex(' ')})")
-    print(f"    Target AccountID: {to_acc} ({to_acc_le.hex(' ')})")
-    
-    patched = 0
-    
-    # Offset 0x00: AccountID + 3
-    if len(data) >= 4 and data[0:4] == from_acc_plus3_le:
-        data[0:4] = to_acc_plus3_le
-        print("    [OK] Patched AccountID+3 at offset 0x00")
-        patched += 1
-    else:
-        print(f"    [WARN] Offset 0x00 check skipped or mismatch. Found: {data[0:4].hex(' ')}")
+    with open(filepath, 'rb') as f:
+        original_ciphertext = f.read()
         
-    # Offset 0x18: AccountID
-    if len(data) >= 28 and data[24:28] == from_acc_le:
-        data[24:28] = to_acc_le
-        print("    [OK] Patched AccountID at offset 0x18")
-        patched += 1
-    else:
-        print(f"    [WARN] Offset 0x18 check skipped or mismatch. Found: {data[24:28].hex(' ')}")
-        
-    # Offset 0x140: AccountID
-    if len(data) >= 324 and data[320:324] == from_acc_le:
-        data[320:324] = to_acc_le
-        print("    [OK] Patched AccountID at offset 0x140")
-        patched += 1
-    else:
-        print(f"    [WARN] Offset 0x140 check skipped or mismatch. Found: {data[320:324].hex(' ')}")
-
-    # Specific SteamID64 offset at 0x139 (313) using AccountID + 106
-    if len(data) >= 317 and data[313:317] == from_acc_plus106_le:
-        data[313:317] = to_acc_plus106_le
-        print("    [OK] Patched AccountID+106 at offset 0x139")
-        patched += 1
-    else:
-        find_idx = data.find(from_acc_plus106_le, 300, 330)
-        if find_idx != -1:
-            data[find_idx:find_idx+4] = to_acc_plus106_le
-            print(f"    [OK] Found and patched AccountID+106 at offset 0x{find_idx:X}")
-            patched += 1
-        else:
-            print("    [WARN] Could not find AccountID+106 around offset 0x139")
-
-    # Offset at the end of the file
-    end_offset = data.rfind(from_acc_le)
-    if end_offset != -1 and end_offset >= len(data) - 8:
-        data[end_offset:end_offset+4] = to_acc_le
-        print(f"    [OK] Patched AccountID tail signature at offset 0x{end_offset:X}")
-        patched += 1
-    else:
-        print(f"    [WARN] Could not locate AccountID signature at the end. Tail hex: {data[-8:].hex(' ')}")
-
+    from_sid_le = struct.pack("<Q", from_sid)
+    to_sid_le = struct.pack("<Q", to_sid)
+    
+    new_ciphertext = bytes(c ^ from_sid_le[i % 8] ^ to_sid_le[i % 8] for i, c in enumerate(original_ciphertext))
+    
     backup_path = filepath + ".backup"
     if not os.path.exists(backup_path):
         shutil.copy2(filepath, backup_path)
         print(f"    [OK] Backup created -> {os.path.basename(backup_path)}")
         
     with open(filepath, 'wb') as f:
-        f.write(data)
-    print(f"    [SUCCESS] index.save resigned successfully! ({patched}/5 patches applied)\n")
+        f.write(new_ciphertext)
+    print(f"    [SUCCESS] index.save decrypted & resigned successfully!\n")
 
 
 def resign_data_file(filepath, from_sid, to_sid):
