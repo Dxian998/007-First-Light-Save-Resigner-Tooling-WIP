@@ -81,7 +81,7 @@ def resign_index_file(filepath, from_sid, to_sid):
     
     new_ciphertext = bytes(c ^ from_sid_le[i % 8] ^ to_sid_le[i % 8] for i, c in enumerate(original_ciphertext))
     
-    backup_dir = os.path.join("Backup", os.path.dirname(filepath))
+    backup_dir = os.path.join(os.path.dirname(filepath), "Backup")
     os.makedirs(backup_dir, exist_ok=True)
     backup_path = os.path.join(backup_dir, os.path.basename(filepath))
     if not os.path.exists(backup_path):
@@ -113,7 +113,7 @@ def resign_data_file(filepath, from_sid, to_sid):
     compressed_payload = zlib.compress(decompressed_payload, level=4)
     new_ciphertext = bytes(c ^ to_sid_le[i % 8] for i, c in enumerate(compressed_payload))
     
-    backup_dir = os.path.join("Backup", os.path.dirname(filepath))
+    backup_dir = os.path.join(os.path.dirname(filepath), "Backup")
     os.makedirs(backup_dir, exist_ok=True)
     backup_path = os.path.join(backup_dir, os.path.basename(filepath))
     if not os.path.exists(backup_path):

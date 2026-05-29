@@ -59,17 +59,22 @@ pub fn backup_if_needed(path: &Path) {
 }
 
 pub fn backup_folder(folder: &Path) -> std::io::Result<PathBuf> {
-    let parent = folder.parent().unwrap_or(Path::new("."));
-    let name   = folder.file_name().expect("folder has no name").to_string_lossy();
-    let mut n  = 1u32;
-    loop {
-        let bak_dir = parent.join(format!("{name}_backup_{n}"));
-        if !bak_dir.exists() {
-            copy_dir_all(folder, &bak_dir)?;
-            return Ok(bak_dir);
+    let bak_dir = folder.join("Backup");
+    fs::create_dir_all(&bak_dir)?;
+    for entry in fs::read_dir(folder)? {
+        let entry = entry?;
+        let name = entry.file_name();
+        if name == "Backup" {
+            continue;
         }
-        n += 1;
+        let dest = bak_dir.join(&name);
+        if entry.file_type()?.is_dir() {
+            copy_dir_all(&entry.path(), &dest)?;
+        } else {
+            fs::copy(entry.path(), dest)?;
+        }
     }
+    Ok(bak_dir)
 }
 
 pub fn copy_dir_all(src: &Path, dst: &Path) -> std::io::Result<()> {
