@@ -4,6 +4,49 @@ import sys
 import time
 import zlib
 
+def crack_index_save(filepath):
+    if not os.path.exists(filepath):
+        print(f"[ERROR] File not found: {filepath}")
+        return None
+        
+    with open(filepath, "rb") as f:
+        ciphertext = f.read()
+        
+    if len(ciphertext) < 8:
+        print("[ERROR] File is too short to be a valid index.save.")
+        return None
+        
+    print(f"Loaded ciphertext: {len(ciphertext)} bytes.")
+    print("Detected index.save format. Initiating instant zero-cost XOR key reconstruction...")
+    
+    start_time = time.time()
+    
+    key = bytes([
+        ciphertext[0] ^ 0x03,
+        ciphertext[1] ^ 0x00,
+        ciphertext[2] ^ 0x00,
+        ciphertext[3] ^ 0x00,
+        0x01, 0x00, 0x10, 0x01
+    ])
+    
+    decrypted_data = bytes(c ^ key[i % 8] for i, c in enumerate(ciphertext))
+    
+    if b"SSaveGameHeader" in decrypted_data:
+        elapsed = time.time() - start_time
+        steam_id = struct.unpack("<Q", key)[0]
+        print(f"\n[SUCCESS] Key cracked in {elapsed:.6f} seconds!")
+        print(f"  Cracked SteamID64: {steam_id}")
+        print(f"  Cracked XOR Key:   {key.hex(' ')}")
+        
+        out_path = filepath + ".decrypted"
+        with open(out_path, "wb") as out_f:
+            out_f.write(decrypted_data)
+        print(f"  Saved decrypted index -> {os.path.basename(out_path)}")
+        return steam_id
+    else:
+        print("\n[FAILED] Instant key reconstruction failed to yield a valid SSaveGameHeader.")
+        return None
+
 def bruteforce_data_save(filepath):
     if not os.path.exists(filepath):
         print(f"[ERROR] File not found: {filepath}")
@@ -74,13 +117,20 @@ def bruteforce_data_save(filepath):
 
 def main():
     if len(sys.argv) < 2:
-        print("007 First Light (Knight) data.save Bruteforcer")
+        print("007 First Light (Knight) Save Bruteforcer")
         print("=============================================")
-        print("Usage: python bruteforce_save.py <path/to/data.save>")
-        print("Example: python bruteforce_save.py KntProfileSaveFile/data.save")
+        print("Usage: python bruteforce_save.py <path/to/save_file>")
+        print("Example: python bruteforce_save.py data.save")
+        print("Example: python bruteforce_save.py index.save")
         sys.exit(1)
         
-    bruteforce_data_save(sys.argv[1])
+    filepath = sys.argv[1]
+    filename = os.path.basename(filepath).lower()
+    
+    if "index.save" in filename:
+        crack_index_save(filepath)
+    else:
+        bruteforce_data_save(filepath)
 
 if __name__ == "__main__":
     main()
