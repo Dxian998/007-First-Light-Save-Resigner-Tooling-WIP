@@ -1,0 +1,128 @@
+import os
+import shutil
+import struct
+import sys
+import zlib
+
+INDEX_XOR_KEY = bytes.fromhex("cb 1c c4 0c 20 2e 20 2d 38 1b fa 27 28 29 19 2b 2d 0e 86 38 20 22 3c 35")
+
+def detect_source_steam_id(index_path):
+    target_path = index_path
+    if not os.path.exists(target_path):
+        target_path = index_path + ".backup"
+    try:
+        with open(target_path, "rb") as f:
+            data = f.read()
+        if len(data) >= 28:
+            account_id = struct.unpack_from("<I", data, 24)[0]
+            detected_sid = 76561197960265728 + account_id
+            return detected_sid
+    except Exception:
+        pass
+    return None
+
+def encrypt_data_file(decrypted_path, steam_sid):
+    print("  Processing data.save.decrypted:")
+    if not os.path.exists(decrypted_path):
+        print(f"    [WARN] Decrypted save data not found: {decrypted_path}")
+        return False
+    with open(decrypted_path, 'rb') as f:
+        decompressed_payload = f.read()
+    compressed_payload = zlib.compress(decompressed_payload, level=4)
+    sid_bytes = struct.pack("<Q", steam_sid)
+    ciphertext = bytes(c ^ sid_bytes[i % 8] for i, c in enumerate(compressed_payload))
+    dir_name = os.path.dirname(decrypted_path)
+    output_path = os.path.join(dir_name, "data.save")
+    if os.path.exists(output_path):
+        backup_path = output_path + ".backup"
+        if not os.path.exists(backup_path):
+            shutil.copy2(output_path, backup_path)
+            print(f"    [OK] Existing data.save backed up -> {os.path.basename(backup_path)}")
+    with open(output_path, 'wb') as f:
+        f.write(ciphertext)
+    print(f"    [SUCCESS] Encrypted and packed save saved to -> {os.path.basename(output_path)}\n")
+    return True
+
+def encrypt_index_file(decrypted_path):
+    print("  Processing index.save.decrypted:")
+    if not os.path.exists(decrypted_path):
+        print(f"    [WARN] Decrypted index file not found: {decrypted_path}")
+        return False
+    with open(decrypted_path, 'rb') as f:
+        data = bytearray(f.read())
+    if len(data) < 28:
+        print("    [ERROR] index file is too short.")
+        return False
+    if len(data) > 0x148:
+        length = data[0x145]
+        str_bytes = data[0x148:0x148+length]
+        scrambled_chars = []
+        for i, b in enumerate(str_bytes):
+            scrambled_chars.append(b ^ INDEX_XOR_KEY[i % len(INDEX_XOR_KEY)])
+        scrambled_str_bytes = bytes(scrambled_chars)
+        data[0x148:0x148+length] = scrambled_str_bytes
+        print("    [OK] Re-scrambled path record at offset 0x148.")
+    dir_name = os.path.dirname(decrypted_path)
+    output_path = os.path.join(dir_name, "index.save")
+    if os.path.exists(output_path):
+        backup_path = output_path + ".backup"
+        if not os.path.exists(backup_path):
+            shutil.copy2(output_path, backup_path)
+            print(f"    [OK] Existing index.save backed up -> {os.path.basename(backup_path)}")
+    with open(output_path, 'wb') as f:
+        f.write(data)
+    print(f"    [SUCCESS] Scrambled index saved to -> {os.path.basename(output_path)}\n")
+    return True
+
+def main():
+    try:
+        sys.stdout.reconfigure(encoding='utf-8')
+    except Exception:
+        pass
+    print("007 First Light (Knight) Save Encrypter & Packer")
+    print("===============================================")
+    sys.stdout.write("Enter save container directory (default: current directory): ")
+    sys.stdout.flush()
+    target_dir = input().strip()
+    if not target_dir:
+        target_dir = "."
+    if not os.path.isdir(target_dir):
+        print(f"[ERROR] Directory not found: {target_dir}")
+        sys.exit(1)
+    decrypted_data_path = os.path.join(target_dir, "data.save.decrypted")
+    decrypted_index_path = os.path.join(target_dir, "index.save.decrypted")
+    has_data_dec = os.path.exists(decrypted_data_path)
+    has_index_dec = os.path.exists(decrypted_index_path)
+    if not has_data_dec and not has_index_dec:
+        print("[ERROR] No decrypted save files (.decrypted) found in this directory.")
+        sys.exit(1)
+    target_sid = None
+    sys.stdout.write("Enter target SteamID64 key for encryption (Press Enter to auto-detect): ")
+    sys.stdout.flush()
+    sid_input = input().strip()
+    if sid_input:
+        target_sid = int(sid_input)
+    else:
+        index_file = os.path.join(target_dir, "index.save")
+        if os.path.exists(index_file):
+            target_sid = detect_source_steam_id(index_file)
+            if target_sid:
+                print(f"  [AUTO] Auto-detected Target SteamID64 from index: {target_sid}")
+            else:
+                print("  [WARN] Auto-detect failed. Proceeding without data.save encryption.")
+        else:
+            print("  [WARN] index.save not found. Proceeding without data.save encryption.")
+    print("\nStarting Save Encryption & Packing...")
+    print("------------------------------------------------")
+    if has_index_dec:
+        encrypt_index_file(decrypted_index_path)
+    if has_data_dec:
+        if target_sid:
+            encrypt_data_file(decrypted_data_path, target_sid)
+        else:
+            print("  [SKIP] Skipping data.save encryption because no SteamID64 key was specified or detected.")
+    print("------------------------------------------------")
+    print("Encryption and packing completed.")
+
+if __name__ == "__main__":
+    main()
