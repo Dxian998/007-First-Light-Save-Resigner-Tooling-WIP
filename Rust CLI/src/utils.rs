@@ -22,7 +22,8 @@ fn collect_recursive(dir: &Path, out: &mut Vec<PathBuf>) {
         if entry.path().is_dir() {
             let name = entry.file_name().to_string_lossy().to_string();
             let skip = name.contains(".git")
-                || name.contains("007-firstlight-toolkit");
+                || name.contains("007-firstlight-toolkit")
+                || name == "Backup";
             if !skip {
                 collect_recursive(&entry.path(), out);
             }

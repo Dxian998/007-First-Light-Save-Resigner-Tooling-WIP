@@ -174,6 +174,8 @@ def main():
     
     resigned_dirs = 0
     for root, dirs, files in os.walk("."):
+        if "Backup" in dirs:
+            dirs.remove("Backup")
         if ".git" in root or "007-firstlight-toolkit" in root:
             continue
             
