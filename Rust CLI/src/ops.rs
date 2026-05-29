@@ -8,7 +8,7 @@ use crate::crypto::{
     bruteforce_data_save, crack_index_save, detect_steam_id_from_index_path,
     resolve_steam_id, xor_with_key, zlib_compress, zlib_decompress, VALID_FLG,
 };
-use crate::utils::{backup_folder, backup_if_needed, build_out_path, collect_save_folders};
+use crate::utils::{backup_folder, build_out_path, collect_save_folders};
 
 pub fn cmd_decrypt_folder(folder: &Path, steam_id: Option<u64>) {
     let folders = collect_save_folders(folder);
@@ -332,7 +332,7 @@ fn resign_index(path: &Path, from_id: u64, to_id: u64) {
         .enumerate()
         .map(|(i, &b)| b ^ from_bytes[i % 8] ^ to_bytes[i % 8])
         .collect();
-    backup_if_needed(path);
+    // backup_if_needed(path);
     fs::write(path, &resigned).expect("cannot write resigned index");
     println!("    [SUCCESS] index.save decrypted & resigned successfully!\n");
 }
@@ -353,7 +353,7 @@ fn resign_data(path: &Path, from_id: u64, to_id: u64) {
     };
     let recompressed = zlib_compress(&payload);
     let resigned     = xor_with_key(&recompressed, to_id);
-    backup_if_needed(path);
+    // backup_if_needed(path);
     fs::write(path, &resigned).expect("cannot write resigned data");
     println!(
         "    [SUCCESS] data.save re-encrypted & resigned successfully! (Size changed from {} to {} bytes)\n",
