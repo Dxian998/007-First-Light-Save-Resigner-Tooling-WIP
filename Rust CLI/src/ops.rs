@@ -8,7 +8,7 @@ use crate::crypto::{
     bruteforce_data_save, crack_index_save, detect_steam_id_from_index_path,
     resolve_steam_id, xor_with_key, zlib_compress, zlib_decompress, VALID_FLG,
 };
-use crate::utils::{backup_folder, build_out_path, collect_save_folders, copy_dir_all};
+use crate::utils::{backup_folder, build_out_path, collect_save_folders};
 
 pub fn cmd_decrypt_folder(folder: &Path, steam_id: Option<u64>) {
     let folders = collect_save_folders(folder);
@@ -169,24 +169,12 @@ pub fn encrypt_data(decrypted_path: &Path, output_path: &Path, steam_id: u64) {
     println!("    [SUCCESS] Encrypted and packed save -> {}\n", output_path.file_name().unwrap().to_string_lossy());
 }
 
-fn backup_save_containers(src: &Path, dst: &Path) -> std::io::Result<()> {
-    std::fs::create_dir_all(dst)?;
-    for entry in std::fs::read_dir(src)? {
-        let entry = entry?;
-        if entry.file_name() == "Backup" {
-            continue;
-        }
-        let dest = dst.join(entry.file_name());
-        if entry.file_type()?.is_dir() {
-            copy_dir_all(&entry.path(), &dest)?;
-        } else {
-            std::fs::copy(entry.path(), dest)?;
-        }
-    }
-    Ok(())
-}
-
 pub fn cmd_resign_folder(folder: &Path, to_id: u64, from_id: Option<u64>, auto_confirm: bool) {
+    match backup_folder(folder) {
+        Ok(bak) => println!("  [OK] Backed up to: {}", bak.display()),
+        Err(e)  => eprintln!("  [WARN] Backup failed: {e} — proceeding anyway"),
+    }
+
     let folders = collect_save_folders(folder);
     if folders.is_empty() {
         println!("[warn] no save containers found under {}", folder.display());
@@ -202,21 +190,6 @@ pub fn cmd_resign_folder(folder: &Path, to_id: u64, from_id: Option<u64>, auto_c
     }
     println!("------------------------------------------------");
     println!("Re-signing finished. Resigned {resigned} save containers successfully!");
-
-    if resigned > 0 {
-        let old_name = folder.file_name().unwrap().to_string_lossy().into_owned();
-        let parent   = folder.parent().unwrap_or(Path::new("."));
-        let new_path = parent.join(to_id.to_string());
-        match std::fs::rename(folder, &new_path) {
-            Ok(_)  => println!("  [OK] Folder renamed: {old_name} -> {to_id}"),
-            Err(e) => eprintln!("  [WARN] Folder rename failed: {e}"),
-        }
-        let bak_dir = new_path.join("Backup").join(&old_name);
-        match backup_save_containers(&new_path, &bak_dir) {
-            Ok(_)  => println!("  [OK] Backed up to: {}", bak_dir.display()),
-            Err(e) => eprintln!("  [WARN] Backup failed: {e}"),
-        }
-    }
 }
 
 pub fn cmd_resign_file(path: &Path, to_id: u64, from_id: Option<u64>) {

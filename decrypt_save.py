@@ -87,7 +87,7 @@ def main():
         
     processed_count = 0
     for root, dirs, files in os.walk("."):
-        if "BCK" in root or ".git" in root or "007-firstlight-toolkit" in root:
+        if ".git" in root or "007-firstlight-toolkit" in root:
             continue
             
         has_index = "index.save" in files

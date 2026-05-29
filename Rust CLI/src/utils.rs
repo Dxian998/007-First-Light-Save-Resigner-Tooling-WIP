@@ -21,10 +21,8 @@ fn collect_recursive(dir: &Path, out: &mut Vec<PathBuf>) {
     for entry in &entries {
         if entry.path().is_dir() {
             let name = entry.file_name().to_string_lossy().to_string();
-            let skip = name.contains("BCK")
-                || name.contains(".git")
-                || name.contains("007-firstlight-toolkit")
-                || name == "Backup";
+            let skip = name.contains(".git")
+                || name.contains("007-firstlight-toolkit");
             if !skip {
                 collect_recursive(&entry.path(), out);
             }
@@ -47,14 +45,17 @@ pub fn build_out_path(source_file: &Path, suffix: &str) -> PathBuf {
 }
 
 pub fn backup_folder(folder: &Path) -> std::io::Result<PathBuf> {
-    let parent  = folder.parent().unwrap_or(Path::new("."));
-    let name    = folder.file_name().expect("folder has no name");
-    let bak_dir = parent.join("Backup").join(name);
-    if bak_dir.exists() {
-        return Ok(bak_dir);
+    let parent = folder.parent().unwrap_or(Path::new("."));
+    let name   = folder.file_name().expect("folder has no name").to_string_lossy();
+    let mut n  = 1u32;
+    loop {
+        let bak_dir = parent.join(format!("{name}_backup_{n}"));
+        if !bak_dir.exists() {
+            copy_dir_all(folder, &bak_dir)?;
+            return Ok(bak_dir);
+        }
+        n += 1;
     }
-    copy_dir_all(folder, &bak_dir)?;
-    Ok(bak_dir)
 }
 
 pub fn copy_dir_all(src: &Path, dst: &Path) -> std::io::Result<()> {
