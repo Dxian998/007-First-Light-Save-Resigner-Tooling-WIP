@@ -5,7 +5,6 @@ import sys
 import time
 import zlib
 
-KNOWN_SOURCE_SID = 76561198026925824
 
 def detect_source_steam_id(index_path):
     target_path = index_path + ".backup"
@@ -192,11 +191,14 @@ def main():
                 if data_sid:
                     print(f"  [AUTO] data.save key cracked successfully in {elapsed:.3f}s: {data_sid}")
                 else:
-                    print("  [WARN] data.save bruteforce failed. Falling back to default.")
-                    data_sid = KNOWN_SOURCE_SID
+                    print("  [ERROR] data.save bruteforce failed and no manual SteamID64 was specified. Skipping container.")
+                    print("          Run with: py resign_save.py <TargetSID> <SourceSID>")
+                    continue
                     
                 if not index_sid:
-                    index_sid = KNOWN_SOURCE_SID
+                    print("  [ERROR] index.save auto-detect failed and no manual SteamID64 was specified. Skipping container.")
+                    print("          Run with: py resign_save.py <TargetSID> <SourceSID>")
+                    continue
 
                 if index_sid == data_sid:
                     print(f"  [OK] Keys match! Both files are bound to same SteamID64: {index_sid}")
@@ -226,7 +228,11 @@ def main():
                             
             elif has_index:
                 print("  [INFO] Only index.save is present in this container.")
-                index_sid = detect_source_steam_id(index_path) or KNOWN_SOURCE_SID
+                index_sid = detect_source_steam_id(index_path)
+                if not index_sid:
+                    print("  [ERROR] index.save auto-detect failed and no manual SteamID64 was specified. Skipping container.")
+                    print("          Run with: py resign_save.py <TargetSID> <SourceSID>")
+                    continue
                 source_sid_to_use = user_source_sid or index_sid
                 resign_index_file(index_path, source_sid_to_use, target_sid)
                 print("  [INFO] data.save is missing, skipped data resigning.")
@@ -234,7 +240,11 @@ def main():
             elif has_data:
                 print("  [INFO] Only data.save is present in this container.")
                 print("  [AUTO] Bruteforcing data.save encryption key...")
-                data_sid = bruteforce_data_save_key(data_path) or KNOWN_SOURCE_SID
+                data_sid = bruteforce_data_save_key(data_path)
+                if not data_sid:
+                    print("  [ERROR] data.save bruteforce failed and no manual SteamID64 was specified. Skipping container.")
+                    print("          Run with: py resign_save.py <TargetSID> <SourceSID>")
+                    continue
                 source_sid_to_use = user_source_sid or data_sid
                 resign_data_file(data_path, source_sid_to_use, target_sid)
                 print("  [INFO] index.save is missing, skipped index resigning.")

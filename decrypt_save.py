@@ -3,7 +3,6 @@ import struct
 import sys
 import zlib
 
-KNOWN_SOURCE_SID = 76561198026925824
 
 def detect_source_steam_id(index_path):
     target_path = index_path
@@ -105,11 +104,13 @@ def main():
                         print(f"  [AUTO] Detected SteamID64 Key: {detected}")
                         dec_sid = detected
                     else:
-                        print(f"  [WARN] Auto-detect failed. Falling back to default: {KNOWN_SOURCE_SID}")
-                        dec_sid = KNOWN_SOURCE_SID
+                        print(f"  [ERROR] Auto-detect failed and no SteamID64 was provided. Skipping container.")
+                        print(f"          Run with: py decrypt_save.py <SteamID64>")
+                        continue
                 else:
-                    print(f"  [WARN] No index.save found. Falling back to default: {KNOWN_SOURCE_SID}")
-                    dec_sid = KNOWN_SOURCE_SID
+                    print(f"  [ERROR] No index.save found for auto-detection and no SteamID64 was provided. Skipping.")
+                    print(f"          Run with: py decrypt_save.py <SteamID64>")
+                    continue
 
             if has_index:
                 decrypt_index_file(os.path.join(root, "index.save"), dec_sid)

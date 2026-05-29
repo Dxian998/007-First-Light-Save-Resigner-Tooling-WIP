@@ -5,7 +5,6 @@ import sys
 import time
 import zlib
 
-KNOWN_SOURCE_SID = 76561198026925824
 
 def detect_source_steam_id(index_path):
     target_path = index_path + ".backup"
@@ -95,8 +94,9 @@ def get_decompressed_payload(filepath):
             print(f"  [SUCCESS] Standalone cracked SteamID64 Key in {elapsed:.3f}s: {cracked}")
             steam_id = cracked
         else:
-            print("  [WARN] Standalone brute-forcer failed. Falling back to default.")
-            steam_id = KNOWN_SOURCE_SID
+            print("  [ERROR] Standalone brute-forcer failed and no fallback SteamID is available.")
+            print("          Cannot decrypt this file without a known SteamID64 key.")
+            return None
             
     sid_bytes = struct.pack("<Q", steam_id)
     decrypted_xor = bytes(c ^ sid_bytes[i % 8] for i, c in enumerate(ciphertext))
