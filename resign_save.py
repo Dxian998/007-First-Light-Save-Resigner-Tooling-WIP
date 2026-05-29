@@ -7,7 +7,8 @@ import zlib
 
 
 def detect_source_steam_id(index_path):
-    target_path = index_path + ".backup"
+    backup_path = os.path.join(os.path.dirname(index_path), "Backup", os.path.basename(index_path))
+    target_path = backup_path
     if not os.path.exists(target_path):
         target_path = index_path
         
@@ -26,7 +27,8 @@ def detect_source_steam_id(index_path):
 def bruteforce_data_save_key(filepath):
     if not os.path.exists(filepath):
         return None
-    target_path = filepath + ".backup"
+    backup_path = os.path.join(os.path.dirname(filepath), "Backup", os.path.basename(filepath))
+    target_path = backup_path
     if not os.path.exists(target_path):
         target_path = filepath
         
@@ -79,10 +81,12 @@ def resign_index_file(filepath, from_sid, to_sid):
     
     new_ciphertext = bytes(c ^ from_sid_le[i % 8] ^ to_sid_le[i % 8] for i, c in enumerate(original_ciphertext))
     
-    backup_path = filepath + ".backup"
+    backup_dir = os.path.join("Backup", os.path.dirname(filepath))
+    os.makedirs(backup_dir, exist_ok=True)
+    backup_path = os.path.join(backup_dir, os.path.basename(filepath))
     if not os.path.exists(backup_path):
         shutil.copy2(filepath, backup_path)
-        print(f"    [OK] Backup created -> {os.path.basename(backup_path)}")
+        print(f"    [OK] Backup created -> {backup_path}")
         
     with open(filepath, 'wb') as f:
         f.write(new_ciphertext)
@@ -109,10 +113,12 @@ def resign_data_file(filepath, from_sid, to_sid):
     compressed_payload = zlib.compress(decompressed_payload, level=4)
     new_ciphertext = bytes(c ^ to_sid_le[i % 8] for i, c in enumerate(compressed_payload))
     
-    backup_path = filepath + ".backup"
+    backup_dir = os.path.join("Backup", os.path.dirname(filepath))
+    os.makedirs(backup_dir, exist_ok=True)
+    backup_path = os.path.join(backup_dir, os.path.basename(filepath))
     if not os.path.exists(backup_path):
         shutil.copy2(filepath, backup_path)
-        print(f"    [OK] Backup created -> {os.path.basename(backup_path)}")
+        print(f"    [OK] Backup created -> {backup_path}")
         
     with open(filepath, 'wb') as f:
         f.write(new_ciphertext)

@@ -44,6 +44,20 @@ pub fn build_out_path(source_file: &Path, suffix: &str) -> PathBuf {
     source_file.with_file_name(name)
 }
 
+pub fn backup_if_needed(path: &Path) {
+    let parent = path.parent().unwrap_or(Path::new("."));
+    let bak_dir = parent.join("Backup");
+    if !bak_dir.exists() {
+        let _ = fs::create_dir_all(&bak_dir);
+    }
+    let bak = bak_dir.join(path.file_name().unwrap());
+    if !bak.exists() && path.exists() {
+        if fs::copy(path, &bak).is_ok() {
+            println!("    [OK] Backup created -> {}", bak.display());
+        }
+    }
+}
+
 pub fn backup_folder(folder: &Path) -> std::io::Result<PathBuf> {
     let parent = folder.parent().unwrap_or(Path::new("."));
     let name   = folder.file_name().expect("folder has no name").to_string_lossy();
