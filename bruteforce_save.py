@@ -4,6 +4,23 @@ import sys
 import time
 import zlib
 
+
+def guess_xor_mask(ciphertext):
+    if len(ciphertext) < 24:
+        return None
+    try:
+        pattern = b"meHeader"
+        key_bytes = bytes(ciphertext[16 + i] ^ pattern[i] for i in range(8))
+        key = struct.unpack("<Q", key_bytes)[0]
+        
+        decrypted = bytes(c ^ key_bytes[i % 8] for i, c in enumerate(ciphertext))
+        if b"SSaveGameHeader" in decrypted:
+            return key, key_bytes, decrypted
+    except Exception:
+        pass
+    return None
+
+
 def crack_index_save(filepath):
     if not os.path.exists(filepath):
         print(f"[ERROR] File not found: {filepath}")
@@ -21,6 +38,20 @@ def crack_index_save(filepath):
     
     start_time = time.time()
     
+    guessed = guess_xor_mask(ciphertext)
+    if guessed is not None:
+        steam_id, key, decrypted_data = guessed
+        elapsed = time.time() - start_time
+        print(f"\n[SUCCESS] Key cracked in {elapsed:.6f} seconds!")
+        print(f"  Cracked SteamID64: {steam_id}")
+        print(f"  Cracked XOR Key:   {key.hex(' ')}")
+        
+        out_path = filepath + ".decrypted"
+        with open(out_path, "wb") as out_f:
+            out_f.write(decrypted_data)
+        print(f"  Saved decrypted index -> {os.path.basename(out_path)}")
+        return steam_id
+
     key = bytes([
         ciphertext[0] ^ 0x03,
         ciphertext[1] ^ 0x00,
@@ -46,6 +77,7 @@ def crack_index_save(filepath):
     else:
         print("\n[FAILED] Instant key reconstruction failed to yield a valid SSaveGameHeader.")
         return None
+
 
 def bruteforce_data_save(filepath):
     if not os.path.exists(filepath):
@@ -114,6 +146,7 @@ def bruteforce_data_save(filepath):
     elapsed = time.time() - start_time
     print(f"\n[FAILED] Brute-force completed in {elapsed:.4f} seconds after {tests_run} tests. No key found.")
     return None
+
 
 def main():
     if len(sys.argv) < 2:

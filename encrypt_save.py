@@ -5,7 +5,31 @@ import sys
 import zlib
 
 
+def guess_xor_mask(index_path):
+    if not os.path.exists(index_path):
+        return None
+    try:
+        with open(index_path, "rb") as f:
+            data = f.read()
+        if len(data) < 24:
+            return None
+        pattern = b"meHeader"
+        key_bytes = bytes(data[16 + i] ^ pattern[i] for i in range(8))
+        key = struct.unpack("<Q", key_bytes)[0]
+        
+        decrypted = bytes(c ^ key_bytes[i % 8] for i, c in enumerate(data))
+        if b"SSaveGameHeader" in decrypted:
+            return key
+    except Exception:
+        pass
+    return None
+
+
 def detect_source_steam_id(index_path):
+    guessed = guess_xor_mask(index_path)
+    if guessed is not None:
+        return guessed
+
     target_path = index_path
     if not os.path.exists(target_path):
         target_path = index_path + ".backup"
@@ -19,6 +43,7 @@ def detect_source_steam_id(index_path):
     except Exception:
         pass
     return None
+
 
 def encrypt_data_file(decrypted_path, steam_sid):
     print("  Processing data.save.decrypted:")
@@ -41,6 +66,7 @@ def encrypt_data_file(decrypted_path, steam_sid):
         f.write(ciphertext)
     print(f"    [SUCCESS] Encrypted and packed save saved to -> {os.path.basename(output_path)}\n")
     return True
+
 
 def encrypt_index_file(decrypted_path, steam_sid):
     print("  Processing index.save.decrypted:")
@@ -65,6 +91,7 @@ def encrypt_index_file(decrypted_path, steam_sid):
         f.write(ciphertext)
     print(f"    [SUCCESS] Encrypted index saved to -> {os.path.basename(output_path)}\n")
     return True
+
 
 def main():
     try:

@@ -6,7 +6,31 @@ import time
 import zlib
 
 
+def guess_xor_mask(index_path):
+    if not os.path.exists(index_path):
+        return None
+    try:
+        with open(index_path, "rb") as f:
+            data = f.read()
+        if len(data) < 24:
+            return None
+        pattern = b"meHeader"
+        key_bytes = bytes(data[16 + i] ^ pattern[i] for i in range(8))
+        key = struct.unpack("<Q", key_bytes)[0]
+        
+        decrypted = bytes(c ^ key_bytes[i % 8] for i, c in enumerate(data))
+        if b"SSaveGameHeader" in decrypted:
+            return key
+    except Exception:
+        pass
+    return None
+
+
 def detect_source_steam_id(index_path):
+    guessed = guess_xor_mask(index_path)
+    if guessed is not None:
+        return guessed
+
     target_path = index_path + ".backup"
     if not os.path.exists(target_path):
         target_path = index_path

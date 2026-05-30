@@ -437,3 +437,87 @@ pub fn cmd_bruteforce_file(path: &Path) {
         }
     }
 }
+
+pub fn cmd_unsign_folder(folder: &Path, steam_id: Option<u64>) {
+    let folders = collect_save_folders(folder);
+    if folders.is_empty() {
+        println!("[warn] no save containers found under {}", folder.display());
+        return;
+    }
+    let mut processed = 0usize;
+    for save_dir in &folders {
+        println!("\nUnsigning container: {}", save_dir.display());
+        let index_path = save_dir.join("index.save");
+        let data_path  = save_dir.join("data.save");
+        let sid = resolve_steam_id(steam_id, &index_path, Some(&data_path), true);
+        if let Some(sid) = sid {
+            if index_path.exists() { unsign_file(&index_path, sid); }
+            if data_path.exists()  { unsign_file(&data_path, sid); }
+            processed += 1;
+        } else {
+            eprintln!(
+                "  [ERROR] Could not determine SteamID64 for {}. Use --steam-id.",
+                save_dir.display()
+            );
+        }
+    }
+    println!("------------------------------------------------");
+    println!("Unsigning completed. Processed {processed} save containers.");
+}
+
+pub fn cmd_unsign_file(path: &Path, steam_id: Option<u64>) {
+    let name = path.file_name().unwrap().to_string_lossy().to_lowercase();
+    let dir  = path.parent().unwrap_or(Path::new("."));
+
+    let sid = if name.contains("index") {
+        resolve_steam_id(steam_id, path, None, false)
+    } else {
+        resolve_steam_id(steam_id, &dir.join("index.save"), Some(path), true)
+    };
+
+    let Some(sid) = sid else {
+        eprintln!("[ERROR] Could not determine SteamID64. Use --steam-id.");
+        std::process::exit(1);
+    };
+
+    unsign_file(path, sid);
+}
+
+fn unsign_file(path: &Path, steam_id: u64) {
+    println!("  Unsigning {}:", path.file_name().unwrap().to_string_lossy());
+    let ciphertext = fs::read(path).expect("cannot read file");
+    let plaintext = xor_with_key(&ciphertext, steam_id);
+    fs::write(path, &plaintext).expect("cannot write unsigned file");
+    println!("    [SUCCESS] File unsigned (Epic Games compatible) successfully!");
+}
+
+pub fn cmd_sign_folder(folder: &Path, steam_id: u64) {
+    let folders = collect_save_folders(folder);
+    if folders.is_empty() {
+        println!("[warn] no save containers found under {}", folder.display());
+        return;
+    }
+    let mut processed = 0usize;
+    for save_dir in &folders {
+        println!("\nSigning container: {}", save_dir.display());
+        let index_path = save_dir.join("index.save");
+        let data_path  = save_dir.join("data.save");
+        if index_path.exists() { sign_file(&index_path, steam_id); }
+        if data_path.exists()  { sign_file(&data_path, steam_id); }
+        processed += 1;
+    }
+    println!("------------------------------------------------");
+    println!("Signing completed. Processed {processed} save containers.");
+}
+
+pub fn cmd_sign_file(path: &Path, steam_id: u64) {
+    sign_file(path, steam_id);
+}
+
+fn sign_file(path: &Path, steam_id: u64) {
+    println!("  Signing {}:", path.file_name().unwrap().to_string_lossy());
+    let plaintext = fs::read(path).expect("cannot read file");
+    let ciphertext = xor_with_key(&plaintext, steam_id);
+    fs::write(path, &ciphertext).expect("cannot write signed file");
+    println!("    [SUCCESS] File signed (Steam compatible) successfully!");
+}

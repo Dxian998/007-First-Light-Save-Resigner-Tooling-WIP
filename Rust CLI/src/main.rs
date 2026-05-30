@@ -12,6 +12,8 @@ use ops::{
     cmd_decrypt_file, cmd_decrypt_folder,
     cmd_encrypt_file, cmd_encrypt_folder,
     cmd_resign_file, cmd_resign_folder,
+    cmd_sign_file, cmd_sign_folder,
+    cmd_unsign_file, cmd_unsign_folder,
 };
 use parser::cmd_parse_file;
 
@@ -27,11 +29,15 @@ fn main() {
              \n  {0} decrypt    --file <path> | --folder <path>  [--steam-id <SteamID64>]\
              \n  {0} encrypt    --file <path> | --folder <path>  [--steam-id <SteamID64>]\
              \n  {0} resign     --file <path> | --folder <path>  --to-id <SteamID64>  [--from-id <SteamID64>]  [-y]\
+             \n  {0} unsign     --file <path> | --folder <path>  [--steam-id <SteamID64>]\
+             \n  {0} sign       --file <path> | --folder <path>  --steam-id <SteamID64>\
              \n  {0} bruteforce --file <path> | --folder <path>\
              \n  {0} parse      --file <path>                    [--steam-id <SteamID64>]\
              \n\
              \nNotes:\
              \n  decrypt / encrypt operate on index.save / data.save (or their .decrypted variants)\
+             \n  unsign converts Steam -> Epic format (removes XOR cyclic signature)\
+             \n  sign converts Epic -> Steam format (adds XOR cyclic signature)\
              \n  --folder walks subdirectories for save containers automatically\
              \n  SteamID64 is auto-detected from index.save when omitted\
              \n  All numeric values accept decimal or 0x-prefixed hex\
@@ -69,6 +75,24 @@ fn main() {
                 cmd_resign_folder(Path::new(&folder), to_id, from_id, auto_confirm);
             } else {
                 cmd_resign_file(&PathBuf::from(require_arg(&args, "--file")), to_id, from_id);
+            }
+        }
+
+        "unsign" => {
+            let steam_id = arg(&args, "--steam-id").map(|s| parse_u64(&s));
+            if let Some(folder) = arg(&args, "--folder") {
+                cmd_unsign_folder(Path::new(&folder), steam_id);
+            } else {
+                cmd_unsign_file(&PathBuf::from(require_arg(&args, "--file")), steam_id);
+            }
+        }
+
+        "sign" => {
+            let steam_id = parse_u64(&require_arg(&args, "--steam-id"));
+            if let Some(folder) = arg(&args, "--folder") {
+                cmd_sign_folder(Path::new(&folder), steam_id);
+            } else {
+                cmd_sign_file(&PathBuf::from(require_arg(&args, "--file")), steam_id);
             }
         }
 

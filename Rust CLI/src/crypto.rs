@@ -48,7 +48,28 @@ pub fn detect_steam_id_from_index_path(index_path: &Path) -> Option<u64> {
     detect_steam_id_from_index(&raw)
 }
 
+pub fn guess_xor_mask(data: &[u8]) -> Option<u64> {
+    if data.len() < 24 {
+        return None;
+    }
+    let pattern = b"meHeader";
+    let mut key_bytes = [0u8; 8];
+    for i in 0..8 {
+        key_bytes[i] = data[16 + i] ^ pattern[i];
+    }
+    let key = u64::from_le_bytes(key_bytes);
+    let decrypted = xor_with_key(data, key);
+    if decrypted.windows(15).any(|w| w == b"SSaveGameHeader") {
+        Some(key)
+    } else {
+        None
+    }
+}
+
 pub fn crack_index_save(ciphertext: &[u8]) -> Option<u64> {
+    if let Some(key) = guess_xor_mask(ciphertext) {
+        return Some(key);
+    }
     if ciphertext.len() < 8 {
         return None;
     }
@@ -116,6 +137,12 @@ pub fn resolve_steam_id(
         return Some(sid);
     }
     if index_path.exists() {
+        if let Ok(raw) = fs::read(index_path) {
+            if let Some(key) = crack_index_save(&raw) {
+                println!("  [AUTO] Cracked SteamID64 from index.save: {key}");
+                return Some(key);
+            }
+        }
         if let Some(sid) = detect_steam_id_from_index_path(index_path) {
             println!("  [AUTO] Detected SteamID64 from index.save: {sid}");
             return Some(sid);

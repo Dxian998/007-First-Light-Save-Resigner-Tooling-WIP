@@ -6,7 +6,31 @@ import time
 import zlib
 
 
+def guess_xor_mask(index_path):
+    if not os.path.exists(index_path):
+        return None
+    try:
+        with open(index_path, "rb") as f:
+            data = f.read()
+        if len(data) < 24:
+            return None
+        pattern = b"meHeader"
+        key_bytes = bytes(data[16 + i] ^ pattern[i] for i in range(8))
+        key = struct.unpack("<Q", key_bytes)[0]
+        
+        decrypted = bytes(c ^ key_bytes[i % 8] for i, c in enumerate(data))
+        if b"SSaveGameHeader" in decrypted:
+            return key
+    except Exception:
+        pass
+    return None
+
+
 def detect_source_steam_id(index_path):
+    guessed = guess_xor_mask(index_path)
+    if guessed is not None:
+        return guessed
+
     backup_path = os.path.join(os.path.dirname(index_path), "Backup", os.path.basename(index_path))
     target_path = backup_path
     if not os.path.exists(target_path):
@@ -126,6 +150,26 @@ def resign_data_file(filepath, from_sid, to_sid):
     return True
 
 
+def sign_unsign_file(filepath, steam_id, action="unsign"):
+    print(f"  {action.capitalize()}ing {os.path.basename(filepath)}:")
+    with open(filepath, 'rb') as f:
+        original = f.read()
+        
+    key_bytes = struct.pack("<Q", steam_id)
+    processed = bytes(c ^ key_bytes[i % 8] for i, c in enumerate(original))
+    
+    backup_dir = os.path.join(os.path.dirname(filepath), "Backup")
+    os.makedirs(backup_dir, exist_ok=True)
+    backup_path = os.path.join(backup_dir, os.path.basename(filepath))
+    if not os.path.exists(backup_path):
+        shutil.copy2(filepath, backup_path)
+        print(f"    [OK] Backup created -> {backup_path}")
+        
+    with open(filepath, 'wb') as f:
+        f.write(processed)
+    print(f"    [SUCCESS] {os.path.basename(filepath)} {action}ed successfully!\n")
+
+
 def get_confirmation(prompt, default=True, auto_confirm=False):
     if auto_confirm:
         return True
@@ -146,33 +190,63 @@ def get_confirmation(prompt, default=True, auto_confirm=False):
             sys.stdout.write("Please respond with 'yes' or 'no' (or 'y' or 'n').\n")
 
 
+def print_usage():
+    print("007 First Light (Knight) Save Tool (Python Version)")
+    print("==================================================")
+    print("Usage:")
+    print("  python resign_save.py unsign <SourceSteamID64>")
+    print("  python resign_save.py sign   <TargetSteamID64>")
+    print("  python resign_save.py resign <TargetSteamID64> [SourceSteamID64]")
+    print("\nLegacy Usage:")
+    print("  python resign_save.py <TargetSteamID64> [SourceSteamID64]")
+    print("\nFlags:")
+    print("  -y / --yes   Auto-confirm mismatches")
+
+
 def main():
     auto_confirm = "-y" in sys.argv or "--yes" in sys.argv
     clean_argv = [arg for arg in sys.argv if arg not in ("-y", "--yes")]
     
-    if len(clean_argv) < 2:
-        print("007 First Light (Knight) Save Re-signer")
-        print("=========================================")
-        print("Usage: python resign_save.py <TargetSteamID64> [SourceSteamID64] [-y/--yes]")
-        print("Example: python resign_save.py 76561198026925825")
-        print("Note: -y / --yes flags automatically approve any mismatched ID warnings.")
+    mode = "resign"
+    target_sid = None
+    user_source_sid = None
+    
+    if len(clean_argv) >= 2:
+        if clean_argv[1] in ("unsign", "sign", "resign"):
+            mode = clean_argv[1]
+            if len(clean_argv) < 3:
+                print_usage()
+                sys.exit(1)
+            target_sid = int(clean_argv[2])
+            if len(clean_argv) >= 4:
+                user_source_sid = int(clean_argv[3])
+        else:
+            try:
+                target_sid = int(clean_argv[1])
+                mode = "resign"
+                if len(clean_argv) >= 3:
+                    user_source_sid = int(clean_argv[2])
+            except ValueError:
+                print_usage()
+                sys.exit(1)
+    else:
+        print_usage()
         sys.exit(1)
         
-    target_sid = int(clean_argv[1])
-    
-    user_source_sid = None
-    if len(clean_argv) >= 3:
-        user_source_sid = int(clean_argv[2])
-        
-    print(f"Starting Re-signing Process:")
-    if user_source_sid:
-        print(f"  Source SteamID64: {user_source_sid} (Manually Specified)")
+    print(f"Starting Operation ({mode.upper()}):")
+    if mode == "unsign":
+        print(f"  Source SteamID64: {target_sid}")
+    elif mode == "sign":
+        print(f"  Target SteamID64: {target_sid}")
     else:
-        print(f"  Source SteamID64: [AUTO-DETECT / BRUTEFORCE]")
-    print(f"  Target SteamID64: {target_sid}")
+        if user_source_sid:
+            print(f"  Source SteamID64: {user_source_sid} (Manually Specified)")
+        else:
+            print(f"  Source SteamID64: [AUTO-DETECT / BRUTEFORCE]")
+        print(f"  Target SteamID64: {target_sid}")
     print("------------------------------------------------")
     
-    resigned_dirs = 0
+    processed_dirs = 0
     for root, dirs, files in os.walk("."):
         if "Backup" in dirs:
             dirs.remove("Backup")
@@ -188,79 +262,97 @@ def main():
             index_path = os.path.join(root, "index.save")
             data_path = os.path.join(root, "data.save")
 
-            if has_index and has_data:
-                index_sid = detect_source_steam_id(index_path)
-                
-                print("  [AUTO] Bruteforcing data.save encryption key...")
-                start_t = time.time()
-                data_sid = bruteforce_data_save_key(data_path)
-                elapsed = time.time() - start_t
-                
-                if data_sid:
-                    print(f"  [AUTO] data.save key cracked successfully in {elapsed:.3f}s: {data_sid}")
-                else:
-                    print("  [ERROR] data.save bruteforce failed and no manual SteamID64 was specified. Skipping container.")
-                    print("          Run with: py resign_save.py <TargetSID> <SourceSID>")
+            if mode == "unsign":
+                sid_to_use = target_sid or guess_xor_mask(index_path) or bruteforce_data_save_key(data_path)
+                if not sid_to_use:
+                    print("  [ERROR] Could not determine SteamID64. Use: py resign_save.py unsign <SourceSID>")
                     continue
+                if has_index:
+                    sign_unsign_file(index_path, sid_to_use, "unsign")
+                if has_data:
+                    sign_unsign_file(data_path, sid_to_use, "unsign")
+                
+            elif mode == "sign":
+                if has_index:
+                    sign_unsign_file(index_path, target_sid, "sign")
+                if has_data:
+                    sign_unsign_file(data_path, target_sid, "sign")
                     
-                if not index_sid:
-                    print("  [ERROR] index.save auto-detect failed and no manual SteamID64 was specified. Skipping container.")
-                    print("          Run with: py resign_save.py <TargetSID> <SourceSID>")
-                    continue
+            else:
+                if has_index and has_data:
+                    index_sid = detect_source_steam_id(index_path)
+                    
+                    print("  [AUTO] Bruteforcing data.save encryption key...")
+                    start_t = time.time()
+                    data_sid = bruteforce_data_save_key(data_path)
+                    elapsed = time.time() - start_t
+                    
+                    if data_sid:
+                        print(f"  [AUTO] data.save key cracked successfully in {elapsed:.3f}s: {data_sid}")
+                    else:
+                        print("  [ERROR] data.save bruteforce failed and no manual SteamID64 was specified. Skipping container.")
+                        print("          Run with: py resign_save.py <TargetSID> <SourceSID>")
+                        continue
+                        
+                    if not index_sid:
+                        print("  [ERROR] index.save auto-detect failed and no manual SteamID64 was specified. Skipping container.")
+                        print("          Run with: py resign_save.py <TargetSID> <SourceSID>")
+                        continue
 
-                if index_sid == data_sid:
-                    print(f"  [OK] Keys match! Both files are bound to same SteamID64: {index_sid}")
+                    if index_sid == data_sid:
+                        print(f"  [OK] Keys match! Both files are bound to same SteamID64: {index_sid}")
+                        source_sid_to_use = user_source_sid or index_sid
+                        resign_index_file(index_path, source_sid_to_use, target_sid)
+                        resign_data_file(data_path, source_sid_to_use, target_sid)
+                    else:
+                        print("  " + "!" * 64)
+                        print(f"  [WARNING] STEAMID MISMATCH DETECTED!")
+                        print(f"    index.save is bound to: {index_sid}")
+                        print(f"    data.save is encrypted with: {data_sid}")
+                        print("  " + "!" * 64)
+                        
+                        if user_source_sid:
+                            print(f"  Using manual override key {user_source_sid} for both files.")
+                            resign_index_file(index_path, user_source_sid, target_sid)
+                            resign_data_file(data_path, user_source_sid, target_sid)
+                        else:
+                            confirm_msg = f"  Proceed with dynamic split re-signing?\n    (index.save will use {index_sid} and data.save will use {data_sid})"
+                            if get_confirmation(confirm_msg, default=True, auto_confirm=auto_confirm):
+                                print("  Proceeding with dynamic splitting...")
+                                resign_index_file(index_path, index_sid, target_sid)
+                                resign_data_file(data_path, data_sid, target_sid)
+                            else:
+                                print("  Skipped this container per user rejection.")
+                                continue
+                                
+                elif has_index:
+                    print("  [INFO] Only index.save is present in this container.")
+                    index_sid = detect_source_steam_id(index_path)
+                    if not index_sid:
+                        print("  [ERROR] index.save auto-detect failed and no manual SteamID64 was specified. Skipping container.")
+                        print("          Run with: py resign_save.py <TargetSID> <SourceSID>")
+                        continue
                     source_sid_to_use = user_source_sid or index_sid
                     resign_index_file(index_path, source_sid_to_use, target_sid)
-                    resign_data_file(data_path, source_sid_to_use, target_sid)
-                else:
-                    print("  " + "!" * 64)
-                    print(f"  [WARNING] STEAMID MISMATCH DETECTED!")
-                    print(f"    index.save is bound to: {index_sid}")
-                    print(f"    data.save is encrypted with: {data_sid}")
-                    print("  " + "!" * 64)
+                    print("  [INFO] data.save is missing, skipped data resigning.")
                     
-                    if user_source_sid:
-                        print(f"  Using manual override key {user_source_sid} for both files.")
-                        resign_index_file(index_path, user_source_sid, target_sid)
-                        resign_data_file(data_path, user_source_sid, target_sid)
-                    else:
-                        confirm_msg = f"  Proceed with dynamic split re-signing?\n    (index.save will use {index_sid} and data.save will use {data_sid})"
-                        if get_confirmation(confirm_msg, default=True, auto_confirm=auto_confirm):
-                            print("  Proceeding with dynamic splitting...")
-                            resign_index_file(index_path, index_sid, target_sid)
-                            resign_data_file(data_path, data_sid, target_sid)
-                        else:
-                            print("  Skipped this container per user rejection.")
-                            continue
-                            
-            elif has_index:
-                print("  [INFO] Only index.save is present in this container.")
-                index_sid = detect_source_steam_id(index_path)
-                if not index_sid:
-                    print("  [ERROR] index.save auto-detect failed and no manual SteamID64 was specified. Skipping container.")
-                    print("          Run with: py resign_save.py <TargetSID> <SourceSID>")
-                    continue
-                source_sid_to_use = user_source_sid or index_sid
-                resign_index_file(index_path, source_sid_to_use, target_sid)
-                print("  [INFO] data.save is missing, skipped data resigning.")
-                
-            elif has_data:
-                print("  [INFO] Only data.save is present in this container.")
-                print("  [AUTO] Bruteforcing data.save encryption key...")
-                data_sid = bruteforce_data_save_key(data_path)
-                if not data_sid:
-                    print("  [ERROR] data.save bruteforce failed and no manual SteamID64 was specified. Skipping container.")
-                    print("          Run with: py resign_save.py <TargetSID> <SourceSID>")
-                    continue
-                source_sid_to_use = user_source_sid or data_sid
-                resign_data_file(data_path, source_sid_to_use, target_sid)
-                print("  [INFO] index.save is missing, skipped index resigning.")
-                
-            resigned_dirs += 1
+                elif has_data:
+                    print("  [INFO] Only data.save is present in this container.")
+                    print("  [AUTO] Bruteforcing data.save encryption key...")
+                    data_sid = bruteforce_data_save_key(data_path)
+                    if not data_sid:
+                        print("  [ERROR] data.save bruteforce failed and no manual SteamID64 was specified. Skipping container.")
+                        print("          Run with: py resign_save.py <TargetSID> <SourceSID>")
+                        continue
+                    source_sid_to_use = user_source_sid or data_sid
+                    resign_data_file(data_path, source_sid_to_use, target_sid)
+                    print("  [INFO] index.save is missing, skipped index resigning.")
+                    
+            processed_dirs += 1
             
     print("------------------------------------------------")
-    print(f"Re-signing finished. Resigned {resigned_dirs} save containers successfully!")
+    print(f"Operation finished. Processed {processed_dirs} save containers successfully!")
+
 
 if __name__ == "__main__":
     main()
