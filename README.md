@@ -1,5 +1,5 @@
 ### `remotecache.vdf` generating guide: 
-#### (in case game goes back to main menu or they don't show up)
+#### (if loading resigned saves, the game goes back to main menu or it doesn't show up)
 
 ### Step 1: Close Steam
 * **Shut down Steam completely.**
