@@ -12,8 +12,10 @@ mod crypto;
 mod utils;
 mod ops;
 mod parser;
+mod rc;
 
 use ops::{cmd_resign_file, cmd_resign_folder};
+use rc::remote_cache_vdf_file::RemoteCacheVdfFile;
 
 // ── colour palette ───────────────────────────────────────────────
 const BG_DEEP:    Color32 = Color32::from_rgb(10,  12,  16);
@@ -24,7 +26,7 @@ const ACCENT:     Color32 = Color32::from_rgb(180, 150, 80);   // gold
 const ACCENT_DIM: Color32 = Color32::from_rgb(100,  83,  42);
 const TEXT_PRI:   Color32 = Color32::from_rgb(220, 215, 200);
 const TEXT_SEC:   Color32 = Color32::from_rgb(120, 115, 105);
-const TEXT_HINT:  Color32 = Color32::from_rgb(75,   72,  65);
+const TEXT_HINT:  Color32 = Color32::from_rgb(130, 125, 115);
 const SUCCESS:    Color32 = Color32::from_rgb(80,  170, 110);
 const ERROR_COL:  Color32 = Color32::from_rgb(200,  80,  70);
 const BORDER:     Color32 = Color32::from_rgb(40,   47,  62);
@@ -39,18 +41,33 @@ fn try_parse_u64(s: &str) -> Option<u64> {
     }
 }
 
+fn display_path(path: &str) -> String {
+    const MAX_CHARS: usize = 48;
+    let chars: Vec<char> = path.chars().collect();
+    if chars.len() <= MAX_CHARS {
+        path.to_string()
+    } else {
+        let tail: String = chars[chars.len() - MAX_CHARS..].iter().collect();
+        format!("…{}", tail)
+    }
+}
+
 // ── state ────────────────────────────────────────────────────────
 #[derive(PartialEq, Clone, Copy)]
 enum PathMode { File, Folder }
 
+#[derive(PartialEq, Clone, Copy)]
+enum Tab { ResignSave, VdfGenerator }
+
 struct App {
-    path:         String,
-    path_mode:    PathMode,
-    to_id:        String,
-    from_id:      String,
-    auto_confirm: bool,
-    is_busy:      Arc<Mutex<bool>>,
-    status:       Arc<Mutex<Status>>,
+    tab:       Tab,
+    path:      String,
+    path_mode: PathMode,
+    to_id:     String,
+    from_id:   String,
+    vdf_path:  String,
+    is_busy:   Arc<Mutex<bool>>,
+    status:    Arc<Mutex<Status>>,
 }
 
 #[derive(Clone)]
@@ -65,13 +82,14 @@ enum StatusKind { Idle, Running, Ok, Err }
 impl Default for App {
     fn default() -> Self {
         Self {
-            path:         String::new(),
-            path_mode:    PathMode::Folder,
-            to_id:        String::new(),
-            from_id:      String::new(),
-            auto_confirm: true,
-            is_busy:      Arc::new(Mutex::new(false)),
-            status:       Arc::new(Mutex::new(Status {
+            tab:       Tab::ResignSave,
+            path:      String::new(),
+            path_mode: PathMode::Folder,
+            to_id:     String::new(),
+            from_id:   String::new(),
+            vdf_path:  String::new(),
+            is_busy:   Arc::new(Mutex::new(false)),
+            status:    Arc::new(Mutex::new(Status {
                 text: String::new(),
                 kind: StatusKind::Idle,
             })),
@@ -83,8 +101,8 @@ impl Default for App {
 fn main() -> eframe::Result<()> {
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
-            .with_inner_size([540.0, 550.0])
-            .with_min_inner_size([540.0, 550.0])
+            .with_inner_size([540.0, 595.0])
+            .with_min_inner_size([540.0, 595.0])
             .with_title("007 First Light - Save Resigner")
             .with_decorations(true)
             .with_maximize_button(false)
@@ -140,11 +158,16 @@ impl eframe::App for App {
             i.raw.dropped_files.first().and_then(|f| f.path.clone())
         });
         if let Some(path) = dropped_path {
-            self.path = path.display().to_string();
-            if path.is_dir() {
-                self.path_mode = PathMode::Folder;
-            } else {
-                self.path_mode = PathMode::File;
+            match self.tab {
+                Tab::ResignSave => {
+                    self.path = path.display().to_string();
+                    self.path_mode = if path.is_dir() { PathMode::Folder } else { PathMode::File };
+                }
+                Tab::VdfGenerator => {
+                    if path.is_dir() {
+                        self.vdf_path = path.display().to_string();
+                    }
+                }
             }
         }
 
@@ -180,15 +203,50 @@ impl App {
     fn draw_body(&mut self, ui: &mut egui::Ui) {
         let is_busy = *self.is_busy.lock().unwrap();
 
-        // Sanitize Steam ID inputs: only allow digits, max 17 characters
+        // ── tab bar ──────────────────────────────────────────────
+        ui.horizontal(|ui| {
+            for (t, label) in [(Tab::ResignSave, "Resign Save"), (Tab::VdfGenerator, "VDF Generator")] {
+                let selected = self.tab == t;
+                let fg = if selected { ACCENT } else { TEXT_SEC };
+                let bg = if selected { ACCENT_DIM } else { BG_FIELD };
+                let stroke = if selected {
+                    Stroke::new(1.0_f32, ACCENT)
+                } else {
+                    Stroke::new(1.0_f32, BORDER)
+                };
+                let resp = egui::Frame::NONE
+                    .fill(bg)
+                    .stroke(stroke)
+                    .inner_margin(egui::Margin::symmetric(14_i8, 6_i8))
+                    .show(ui, |ui| {
+                        ui.label(RichText::new(label).font(FontId::proportional(12.5)).color(fg));
+                    })
+                    .response
+                    .interact(egui::Sense::click());
+                if resp.clicked() && !is_busy {
+                    self.tab = t;
+                    *self.status.lock().unwrap() = Status { text: String::new(), kind: StatusKind::Idle };
+                }
+            }
+        });
+
+        ui.add_space(16.0);
+        self.divider(ui);
+        ui.add_space(16.0);
+
+        match self.tab {
+            Tab::ResignSave    => self.draw_resign(ui),
+            Tab::VdfGenerator  => self.draw_vdf(ui),
+        }
+    }
+
+    fn draw_resign(&mut self, ui: &mut egui::Ui) {
+        let is_busy = *self.is_busy.lock().unwrap();
+
         self.to_id.retain(|c| c.is_ascii_digit());
-        if self.to_id.len() > 17 {
-            self.to_id.truncate(17);
-        }
+        if self.to_id.len() > 17 { self.to_id.truncate(17); }
         self.from_id.retain(|c| c.is_ascii_digit());
-        if self.from_id.len() > 17 {
-            self.from_id.truncate(17);
-        }
+        if self.from_id.len() > 17 { self.from_id.truncate(17); }
 
         // ── section: target ──────────────────────────────────────
         self.section_label(ui, "TARGET SAVE");
@@ -197,8 +255,7 @@ impl App {
         // path field
         let full_w = ui.available_width();
         ui.horizontal(|ui| {
-            ui.set_min_width(full_w);
-            let field_w = full_w - 108.0 - 8.0;
+            let field_w = full_w - 130.0;
             egui::Frame::NONE
                 .fill(BG_FIELD)
                 .stroke(Stroke::new(1.0_f32, BORDER))
@@ -212,9 +269,9 @@ impl App {
                     let display = if self.path.is_empty() {
                         RichText::new(hint).color(TEXT_HINT)
                     } else {
-                        RichText::new(&self.path).color(TEXT_PRI)
+                        RichText::new(display_path(&self.path)).color(TEXT_PRI)
                     };
-                    ui.label(display);
+                    ui.add(egui::Label::new(display));
                 });
 
             let btn_label = match self.path_mode {
@@ -307,52 +364,31 @@ impl App {
         });
 
         ui.add_space(6.0);
-        ui.horizontal(|ui| {
-            ui.add_enabled_ui(!is_busy, |ui| {
-                ui.checkbox(
-                    &mut self.auto_confirm,
-                    RichText::new("Skip confirmation prompts when resigning folders")
-                        .font(FontId::proportional(12.5))
-                        .color(TEXT_SEC),
-                );
-            });
-        });
 
         ui.add_space(20.0);
         self.divider(ui);
         ui.add_space(20.0);
 
         // ── execute button ───────────────────────────────────────
-        let btn_w = ui.available_width();
-        ui.scope(|ui| {
-            ui.set_min_width(btn_w);
-            let execute_response = ui.add_enabled_ui(!is_busy, |ui| {
-                let (rect, response) = ui.allocate_exact_size(
-                    Vec2::new(btn_w, 44.0),
-                    egui::Sense::click(),
-                );
-
-                let bg = if response.hovered() { ACCENT } else { ACCENT_DIM };
-                let border = if response.hovered() { ACCENT } else { ACCENT_DIM };
-                ui.painter().rect_filled(rect, 2.0, bg);
-                ui.painter().rect_stroke(rect, 2.0, Stroke::new(1.0_f32, border), egui::StrokeKind::Inside);
-
-                let label = "▶  EXECUTE RESIGN";
-                ui.painter().text(
-                    rect.center(),
-                    egui::Align2::CENTER_CENTER,
-                    label,
-                    FontId::proportional(14.0),
-                    if response.hovered() { BG_DEEP } else { TEXT_PRI },
-                );
-
-                response
-            });
-
-            if execute_response.inner.clicked() {
+        {
+            let w = ui.available_width();
+            let (rect, response) = ui.allocate_exact_size(Vec2::new(w, 44.0), egui::Sense::click());
+            let active  = !is_busy;
+            let hovered = response.hovered() && active;
+            let bg      = if hovered { ACCENT } else { ACCENT_DIM };
+            ui.painter().rect_filled(rect, 2.0, bg);
+            ui.painter().rect_stroke(rect, 2.0, Stroke::new(1.0_f32, bg), egui::StrokeKind::Inside);
+            ui.painter().text(
+                rect.center(),
+                egui::Align2::CENTER_CENTER,
+                "▶  EXECUTE RESIGN",
+                FontId::proportional(14.0),
+                if hovered { BG_DEEP } else if active { TEXT_PRI } else { TEXT_SEC },
+            );
+            if response.clicked() && active {
                 self.execute();
             }
-        });
+        }
 
         // ── status panel ─────────────────────────────────────────
         let st = self.status.lock().unwrap().clone();
@@ -369,26 +405,28 @@ impl App {
             }
         };
 
-        let full_width = ui.available_width();
-        egui::Frame::NONE
-            .fill(BG_PANEL)
-            .stroke(Stroke::new(1.0_f32, BORDER))
-            .show(ui, |ui| {
-                ui.set_min_width(full_width);
-                ui.set_min_height(44.0);
-                ui.with_layout(egui::Layout::centered_and_justified(egui::Direction::TopDown), |ui| {
-                    if is_busy || st.kind == StatusKind::Running {
-                        ui.horizontal(|ui| {
-                            ui.add_space((ui.available_width() - 170.0) / 2.0); // manual center estimate
-                            ui.spinner();
-                            ui.add_space(4.0);
-                            ui.label(RichText::new(text).font(FontId::proportional(13.0)).color(col));
-                        });
-                    } else {
-                        ui.label(RichText::new(text).font(FontId::proportional(13.0)).color(col));
-                    }
-                });
-            });
+        self.draw_status(ui, is_busy || st.kind == StatusKind::Running, text, col);
+    }
+
+    fn draw_status(&self, ui: &mut egui::Ui, spinning: bool, text: &str, col: Color32) {
+        let w = ui.max_rect().width();
+        let (rect, _) = ui.allocate_exact_size(Vec2::new(w, 44.0), egui::Sense::hover());
+        let painter = ui.painter_at(rect);
+        painter.rect_filled(rect, 0.0, BG_PANEL);
+        painter.rect_stroke(rect, 0.0, Stroke::new(1.0_f32, BORDER), egui::StrokeKind::Inside);
+        let display = if spinning {
+            let dots = match (ui.ctx().input(|i| i.time) * 2.0) as usize % 4 {
+                0 => "",
+                1 => ".",
+                2 => "..",
+                _ => "...",
+            };
+            ui.ctx().request_repaint();
+            format!("{}{}", text, dots)
+        } else {
+            text.to_string()
+        };
+        painter.text(rect.center(), egui::Align2::CENTER_CENTER, &display, FontId::proportional(13.0), col);
     }
 
     fn section_label(&self, ui: &mut egui::Ui, text: &str) {
@@ -479,7 +517,6 @@ impl App {
         let from    = try_parse_u64(&self.from_id);
         let path    = PathBuf::from(&self.path);
         let folder  = self.path_mode == PathMode::Folder;
-        let auto    = self.auto_confirm;
 
         let is_busy = Arc::clone(&self.is_busy);
         let status  = Arc::clone(&self.status);
@@ -491,7 +528,7 @@ impl App {
             let res = std::panic::catch_unwind(|| {
                 println!("\n=== Resign starting ===");
                 if folder {
-                    cmd_resign_folder(&path, to, from, auto);
+                    cmd_resign_folder(&path, to, from, true);
                 } else {
                     cmd_resign_file(&path, to, from);
                 }
@@ -503,6 +540,119 @@ impl App {
                 Status { text: "Resign completed successfully.".into(), kind: StatusKind::Ok }
             } else {
                 Status { text: "Operation failed — check the console for details.".into(), kind: StatusKind::Err }
+            };
+        });
+    }
+
+    fn draw_vdf(&mut self, ui: &mut egui::Ui) {
+        let is_busy = *self.is_busy.lock().unwrap();
+
+        // ── section: remote folder ───────────────────────────────
+        self.section_label(ui, "REMOTE FOLDER");
+        ui.add_space(12.0);
+
+        let full_w = ui.available_width();
+        ui.horizontal(|ui| {
+            let field_w = full_w - 130.0;
+            egui::Frame::NONE
+                .fill(BG_FIELD)
+                .stroke(Stroke::new(1.0_f32, BORDER))
+                .inner_margin(egui::Margin::symmetric(10_i8, 6_i8))
+                .show(ui, |ui| {
+                    ui.set_min_width(field_w);
+                    let display = if self.vdf_path.is_empty() {
+                        RichText::new("Path to Steam remote folder (or drag & drop)…").color(TEXT_HINT)
+                    } else {
+                        RichText::new(display_path(&self.vdf_path)).color(TEXT_PRI)
+                    };
+                    ui.add(egui::Label::new(display));
+                });
+
+            if self.gold_button(ui, "Browse Folder", is_busy).clicked() && !is_busy {
+                if let Some(p) = rfd::FileDialog::new().pick_folder() {
+                    self.vdf_path = p.display().to_string();
+                }
+            }
+        });
+
+        ui.add_space(6.0);
+        ui.label(
+            RichText::new("Select the remote folder from your Steam save directory.\n(e.g. …\\userdata\\<AccountId>\\3768760\\remote)")
+                .font(FontId::proportional(11.5))
+                .color(TEXT_SEC),
+        );
+
+        ui.add_space(20.0);
+        self.divider(ui);
+        ui.add_space(20.0);
+
+        // ── execute button ───────────────────────────────────────
+        {
+            let w = ui.available_width();
+            let (rect, response) = ui.allocate_exact_size(Vec2::new(w, 44.0), egui::Sense::click());
+            let active  = !is_busy;
+            let hovered = response.hovered() && active;
+            let bg      = if hovered { ACCENT } else { ACCENT_DIM };
+            ui.painter().rect_filled(rect, 2.0, bg);
+            ui.painter().rect_stroke(rect, 2.0, Stroke::new(1.0_f32, bg), egui::StrokeKind::Inside);
+            ui.painter().text(
+                rect.center(),
+                egui::Align2::CENTER_CENTER,
+                "⚙  GENERATE VDF",
+                FontId::proportional(14.0),
+                if hovered { BG_DEEP } else if active { TEXT_PRI } else { TEXT_SEC },
+            );
+            if response.clicked() && active {
+                self.execute_vdf();
+            }
+        }
+
+        // ── status panel ─────────────────────────────────────────
+        let st = self.status.lock().unwrap().clone();
+        ui.add_space(16.0);
+
+        let (text, col) = if is_busy {
+            ("Generating VDF…", ACCENT)
+        } else {
+            match st.kind {
+                StatusKind::Running => ("Generating VDF…", ACCENT),
+                StatusKind::Ok      => (&st.text as &str, SUCCESS),
+                StatusKind::Err     => (&st.text as &str, ERROR_COL),
+                StatusKind::Idle    => ("Ready to generate remotecache.vdf", TEXT_SEC),
+            }
+        };
+
+        self.draw_status(ui, is_busy || st.kind == StatusKind::Running, text, col);
+    }
+
+    fn execute_vdf(&mut self) {
+        if self.vdf_path.is_empty() {
+            *self.status.lock().unwrap() = Status {
+                text: "No folder selected.".into(),
+                kind: StatusKind::Err,
+            };
+            return;
+        }
+
+        let path    = self.vdf_path.clone();
+        let is_busy = Arc::clone(&self.is_busy);
+        let status  = Arc::clone(&self.status);
+
+        *is_busy.lock().unwrap() = true;
+        *status.lock().unwrap() = Status { text: "Running…".into(), kind: StatusKind::Running };
+
+        thread::spawn(move || {
+            let result = RemoteCacheVdfFile::from_folder(&path)
+                .and_then(|vdf| {
+                    let count = vdf.cached_files.len();
+                    vdf.export_as_file(&path)?;
+                    Ok(count)
+                });
+
+            *is_busy.lock().unwrap() = false;
+            *status.lock().unwrap() = match result {
+                Ok(n)    => Status { text: format!("VDF generated successfully with {} files.", n), kind: StatusKind::Ok },
+                Err(e)   => Status { text: format!("Error: {}", e), kind: StatusKind::Err },
             };
         });
     }
